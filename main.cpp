@@ -14,10 +14,13 @@
 #include <signal.h>
 
 #include "Exception.hpp"
-#include "Networking.hpp"
+#include "Server.hpp"
+#include "Connection.hpp"
+#include "LinearAlgebra.hpp"
 
 using namespace std;
 using namespace std::chrono;
+using namespace ds;
 
 static struct termios stdTerm, rawTerm;
 
@@ -39,16 +42,46 @@ void sigIntHandler(int iSig) {
     quit = true;
 }
 
-class MyBufferFunctor : public Connection::BfrFunctor
+#define toDegrees(x) (x * 180.0 / 3.141592653589793)
+
+class MyBufferFunctor : public BufferFunctor
 {
-    virtual void operator()(Connection &cnx, Connection::Bfr &buf) {
-        cout << ".";
+    virtual void operator()(Connection &cnx, Buffer &buf) {
+        Header &header = buf.getHeader();
+        float qi, qj, qk, qr;
+        header.getRotation(qi, qj, qk, qr);
+        // cout << "q(" << qi << ", " << qj << ", " << qk << ", " << qr << "), ";
+        
+        /*
+        float tx = 2.0 * (qr * qj - qi * qk);
+        tx = (tx > 1.0) ? 1.0 : tx;
+        tx = (tx < -1.0) ? -1.0 : tx;
+        float rx = toDegrees(asin(tx));
+        float ry = toDegrees(atan2(2.0 * (qr * qk + qi * qj), (1.0 - 2.0 * (qj*qj + qk*qk))));
+        float rz = toDegrees(atan2(2.0 * (qr * qi + qj * qk), (1.0 - 2.0 * (qi*qi + qj*qj))));
+        cout << "q(" << qi << ", " << qj << ", " << qk << ", " << qr << "), e(" << rx << ", " << ry << ", " << rz << ")";
+        */
+        
+        vertex3 i(0.0, -1.0, 0.0);
+        vertex3 j(-1.0, 0.0, 0.0);
+        vertex3 k(0.0, 0.0, -1.0);
+        quaternion q(qi, qj, qk, qr);
+        vertex3 ri(q * i);
+        vertex3 rj(q * j);
+        vertex3 rk(q * k);
+        // vertex3 rk(ri | rj);
+        cout << setprecision(2)
+            << "i: (" << ri.x << ", " << ri.y << ", " << ri.z << "), "
+            << "j: (" << rj.x << ", " << rj.y << ", " << rj.z << "), "
+            << "k: (" << rk.x << ", " << rk.y << ", " << rk.z << ")" << endl;
+        
+        cnx.returnRecvBuffer(&buf);
     }
 };
 
 MyBufferFunctor functor;
 
-Server Server::shared("en0", functor);
+Server Server::shared(functor);
 
 int main(int argc, const char * argv[]) {
     // Intercept SIGINT
@@ -58,10 +91,19 @@ int main(int argc, const char * argv[]) {
     sigaction(SIGINT, NULL, &oldsa);
     sigaction(SIGINT, &newsa, NULL);
     
+    /*
+    quaternion u(0.0, 0.7071067812, 0.0, 0.7071067812);
+    vertex4 v(1.0, 0.0, 0.0, 1.0);
+    vertex4 r(u * v);
+    cout << "(" << r.x << ", " << r.y << ", " << r.z << ")" << endl;
+    */
+    
     cout << "Setting up streaming server" << endl;
     
     try {
-        Server::shared.start();
+        string interface("en5");
+        if(argc > 1) interface = argv[1];
+        Server::shared.start(interface.c_str());
 
         // Attempt to retrieve the local hostname and ip address
         char hostBuffer[256];
